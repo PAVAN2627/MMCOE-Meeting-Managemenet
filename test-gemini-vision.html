@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Gemini Vision API</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .container {
+            border: 2px solid #ddd;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        button {
+            background: #4285f4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #357ae8;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            white-space: pre-wrap;
+        }
+        #preview {
+            max-width: 100%;
+            margin-top: 20px;
+            border: 1px solid #ddd;
+        }
+        .error {
+            color: red;
+            background: #ffebee;
+        }
+        .success {
+            color: green;
+            background: #e8f5e9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Test Gemini Vision API</h1>
+        <p>This tool tests if your Gemini API key can extract text from images.</p>
+        
+        <input type="file" id="imageInput" accept="image/*" />
+        <button onclick="testOCR()">Test OCR</button>
+        
+        <div id="status"></div>
+        <img id="preview" style="display:none;" />
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const API_KEY = "AIzaSyDojwcl6ATmQ36raHX-4OBxof1SuslR64k";
+
+        async function testOCR() {
+            const fileInput = document.getElementById('imageInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select an image first');
+                return;
+            }
+
+            const status = document.getElementById('status');
+            const result = document.getElementById('result');
+            const preview = document.getElementById('preview');
+            
+            status.innerHTML = '⏳ Processing...';
+            result.innerHTML = '';
+            
+            try {
+                // Show preview
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                    
+                    const base64Image = e.target.result;
+                    const base64Data = base64Image.split(',')[1];
+                    
+                    console.log('Image size:', base64Data.length, 'bytes');
+                    console.log('MIME type:', file.type);
+                    
+                    // Test API call
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+                    
+                    console.log('Calling API:', apiUrl);
+                    
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [
+                                    {
+                                        text: "Extract all text from this image. Return ONLY the extracted text."
+                                    },
+                                    {
+                                        inline_data: {
+                                            mime_type: file.type,
+                                            data: base64Data
+                                        }
+                                    }
+                                ]
+                            }]
+                        })
+                    });
+                    
+                    console.log('Response status:', response.status);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('Response data:', data);
+                        
+                        const extractedText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                        
+                        if (extractedText) {
+                            status.innerHTML = '✅ Success!';
+                            status.className = 'success';
+                            result.innerHTML = `<strong>Extracted Text:</strong>\n\n${extractedText}`;
+                            result.className = 'success';
+                        } else {
+                            status.innerHTML = '⚠️ No text found in image';
+                            status.className = 'error';
+                            result.innerHTML = 'API returned empty text. The image might not contain readable text.';
+                        }
+                    } else {
+                        const errorData = await response.json();
+                        console.error('API Error:', errorData);
+                        
+                        status.innerHTML = '❌ API Error';
+                        status.className = 'error';
+                        result.innerHTML = `<strong>Error ${response.status}:</strong>\n\n${JSON.stringify(errorData, null, 2)}`;
+                        result.className = 'error';
+                    }
+                };
+                
+                reader.readAsDataURL(file);
+                
+            } catch (error) {
+                console.error('Error:', error);
+                status.innerHTML = '❌ Error';
+                status.className = 'error';
+                result.innerHTML = `<strong>Error:</strong>\n\n${error.message}`;
+                result.className = 'error';
+            }
+        }
+    </script>
+</body>
+</html>
