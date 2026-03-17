@@ -1,8 +1,16 @@
 // Test script to verify Deepgram and Gemini API keys
 // Run with: node test-apis.js
+// Requires: npm install dotenv  (or bun add dotenv)
 
-const GEMINI_API_KEY = "AIzaSyDojwcl6ATmQ36raHX-4OBxof1SuslR64k";
-const DEEPGRAM_API_KEY = "804c538bc44494b897bb2850a95eaf64a1474d48";
+import 'dotenv/config';
+
+const GEMINI_API_KEY = process.env.VITE_GEMINI_API_KEY;
+const DEEPGRAM_API_KEY = process.env.VITE_DEEPGRAM_API_KEY;
+
+if (!GEMINI_API_KEY || !DEEPGRAM_API_KEY) {
+  console.error("❌ Missing keys in .env — make sure VITE_GEMINI_API_KEY and VITE_DEEPGRAM_API_KEY are set.");
+  process.exit(1);
+}
 
 console.log("🧪 Testing API Keys...\n");
 
@@ -45,7 +53,6 @@ async function testGemini() {
         });
         
         if (testResponse.ok) {
-          const result = await testResponse.json();
           console.log(`   ✅ SUCCESS! Model ${firstModel} is working`);
           return { success: true, model: firstModel, endpoint: testEndpoint };
         }

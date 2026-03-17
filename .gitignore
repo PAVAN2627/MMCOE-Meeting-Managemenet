@@ -32,3 +32,6 @@ dist-ssr
 *firebase-adminsdk*.json
 *service-account*.json
 serviceAccount*.json
+
+# Local test/debug scripts
+test-apis.js
