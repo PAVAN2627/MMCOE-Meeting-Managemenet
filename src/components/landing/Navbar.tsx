@@ -45,7 +45,7 @@ const Navbar = () => {
               </Button>
             </Link>
             <Link to="/login">
-              <Button size="sm" className="bg-accent hover:bg-accent/90 text-accent-foreground font-semibold">
+              <Button size="sm" className="bg-accent hover:bg-accent/90 text-black font-semibold">
                 Get Started
               </Button>
             </Link>
@@ -77,7 +77,7 @@ const Navbar = () => {
                 </Button>
               </Link>
               <Link to="/login" className="flex-1">
-                <Button size="sm" className="w-full bg-accent hover:bg-accent/90 text-accent-foreground font-semibold">
+                <Button size="sm" className="w-full bg-accent hover:bg-accent/90 text-black font-semibold">
                   Get Started
                 </Button>
               </Link>

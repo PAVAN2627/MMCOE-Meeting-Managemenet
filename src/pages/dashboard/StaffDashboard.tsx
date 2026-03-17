@@ -141,9 +141,9 @@ const StaffDashboard = () => {
       </div>
 
       {user?.department && (
-        <div className="inline-flex items-center gap-2 px-4 py-2 bg-teal-light rounded-lg mb-6">
-          <Building2 className="w-4 h-4 text-accent" />
-          <span className="text-sm font-medium text-accent">Department: {user.department}</span>
+        <div className="inline-flex items-center gap-2 px-4 py-2 bg-foreground rounded-lg mb-6">
+          <Building2 className="w-4 h-4 text-background" />
+          <span className="text-sm font-medium text-background">Department: {user.department}</span>
         </div>
       )}
 

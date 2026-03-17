@@ -16,8 +16,8 @@ export const StatCard = ({ icon: Icon, label, value, subtitle }: StatCardProps) 
         <p className="text-3xl font-display font-bold text-foreground mt-1">{value}</p>
         {subtitle && <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>}
       </div>
-      <div className="w-10 h-10 rounded-lg bg-teal-light flex items-center justify-center">
-        <Icon className="w-5 h-5 text-accent" />
+      <div className="w-10 h-10 rounded-lg bg-foreground flex items-center justify-center">
+        <Icon className="w-5 h-5 text-background" />
       </div>
     </div>
   </div>
@@ -39,7 +39,7 @@ interface MeetingItemProps {
 
 export const MeetingItem = ({ title, time, department, status }: MeetingItemProps) => {
   const statusColors = {
-    upcoming: "bg-teal-light text-accent",
+    upcoming: "bg-foreground text-background",
     completed: "bg-secondary text-muted-foreground",
     "in-progress": "bg-accent text-accent-foreground",
   };

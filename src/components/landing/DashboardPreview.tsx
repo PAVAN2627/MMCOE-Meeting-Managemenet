@@ -40,7 +40,7 @@ const DashboardPreview = () => {
           whileInView="visible"
           viewport={{ once: true }}
         >
-          <span className="inline-block px-4 py-1.5 rounded-full bg-teal-light text-accent font-medium text-sm mb-4">
+          <span className="inline-block px-4 py-1.5 rounded-full bg-foreground text-background font-medium text-sm mb-4">
             Dashboards
           </span>
           <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-4">
@@ -71,7 +71,7 @@ const DashboardPreview = () => {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="font-display font-bold text-foreground text-lg">{d.role}</h3>
-                    <span className="text-xs px-2 py-0.5 bg-teal-light text-accent rounded-full font-medium">
+                    <span className="text-xs px-2 py-0.5 bg-foreground text-background rounded-full font-medium">
                       {d.tag}
                     </span>
                   </div>

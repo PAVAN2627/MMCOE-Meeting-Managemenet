@@ -46,7 +46,7 @@ const FeaturesSection = () => {
           whileInView="visible"
           viewport={{ once: true }}
         >
-          <span className="inline-block px-4 py-1.5 rounded-full bg-teal-light text-accent font-medium text-sm mb-4">
+          <span className="inline-block px-4 py-1.5 rounded-full bg-foreground text-background font-medium text-sm mb-4">
             Features
           </span>
           <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-4">
@@ -70,8 +70,8 @@ const FeaturesSection = () => {
               className="group bg-card rounded-xl p-6 shadow-card hover:shadow-card-hover transition-all duration-300 border border-border hover:border-accent/30"
               variants={scaleIn}
             >
-              <div className="w-12 h-12 rounded-lg bg-teal-light flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <feature.icon className="w-6 h-6 text-accent" />
+              <div className="w-12 h-12 rounded-lg bg-foreground flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <feature.icon className="w-6 h-6 text-background" />
               </div>
               <h3 className="text-lg font-display font-semibold text-foreground mb-2">
                 {feature.title}
