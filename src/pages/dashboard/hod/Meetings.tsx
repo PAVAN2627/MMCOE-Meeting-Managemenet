@@ -8,15 +8,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Calendar, Clock, Users, ChevronDown, ChevronUp, Pencil, Trash2, MapPin, FileText, Eye, Download, Upload, X, Mic, MicOff, StickyNote, CheckSquare, Loader2, CalendarIcon, Camera, Save } from "lucide-react";
+import { Plus, Calendar, Clock, Users, ChevronDown, ChevronUp, ChevronRight, Pencil, Trash2, MapPin, FileText, Eye, Download, Upload, X, Mic, MicOff, StickyNote, CheckSquare, Loader2, CalendarIcon, Camera, Save } from "lucide-react";
 import { collection, query, orderBy, getDocs, doc, updateDoc, deleteDoc, Timestamp, addDoc, where } from "firebase/firestore";
 import { downloadAsPDF, downloadAsWord } from "@/lib/reportExport";
 import { db } from "@/integrations/firebase/config";
 import { Meeting } from "@/types/meeting.types";
 import { User } from "@/types/user.types";
 import { AddMeetingDialog } from "@/components/forms/AddMeetingDialog";
+import { MeetingDetailsDialog } from "@/components/forms/MeetingDetailsDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { parseSuggestedDeadline, resolveSuggestedAssignee } from "@/lib/taskExtraction";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -118,6 +120,7 @@ const HODMeetings = () => {
   const [editTaskData, setEditTaskData] = useState<any>({});
   const [selectedTime, setSelectedTime] = useState<Record<string, string>>({});
   const [pendingAssignments, setPendingAssignments] = useState<Record<string, { assigneeId: string; dueDate: string; dueTime: string; priority?: string }>>({});
+  const [selectedMeeting, setSelectedMeeting] = useState<any | null>(null);
   const [scanningNote, setScanningNote] = useState<string | null>(null);
   const [noteHistory, setNoteHistory] = useState<Record<string, any[]>>({});
   const [newNoteText, setNewNoteText] = useState<Record<string, string>>({});
@@ -217,15 +220,8 @@ const HODMeetings = () => {
   }, []);
 
   const toggleExpand = (meetingId: string) => {
-    if (expandedMeeting === meetingId) {
-      setExpandedMeeting(null);
-    } else {
-      setExpandedMeeting(meetingId);
-      loadPersonalNote(meetingId);
-      if (!activeTab[meetingId]) {
-        setActiveTab(prev => ({ ...prev, [meetingId]: "details" }));
-      }
-    }
+    const meeting = meetings.find(item => item.id === meetingId) || null;
+    setSelectedMeeting(meeting);
   };
 
   const handleStatusChange = async (meeting: any, newStatus: string) => {
@@ -349,9 +345,26 @@ const HODMeetings = () => {
             
             if (assignedUser && assignedUser.email) {
               try {
-                const dueDate = task.suggestedDueDate?.toDate().toLocaleDateString() || 
-                               task.dueDate?.toDate().toLocaleDateString() || 
-                               'Not specified';
+                const formatDueDate = (timestamp: any) => {
+                  const date = timestamp?.toDate?.();
+                  if (!date) return 'Not specified';
+                  const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0;
+                  return hasTime
+                    ? date.toLocaleString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })
+                    : date.toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      });
+                };
+
+                const dueDate = formatDueDate(task.suggestedDueDate || task.dueDate);
                 
                 // Build HTML email (like welcome email)
                 const priorityColor = task.priority === 'high' ? '#ef4444' : 
@@ -587,15 +600,26 @@ ${aiSummary}
 | ID | Action Item | Assigned To | Priority | Status | Due Date |
 | :-- | :------------------------------------------- | :---------- | :--------- | :----- | :------- |
 ${tasks.map((task: any, i: number) => {
-  const dueDate = task.suggestedDueDate?.toDate().toLocaleDateString('en-US', { 
-    month: 'short', 
-    day: 'numeric', 
-    year: 'numeric' 
-  }) || task.dueDate?.toDate().toLocaleDateString('en-US', { 
-    month: 'short', 
-    day: 'numeric', 
-    year: 'numeric' 
-  }) || 'TBD';
+  const formatTaskDueDate = (timestamp: any) => {
+    const date = timestamp?.toDate?.();
+    if (!date) return 'TBD';
+    const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0;
+    return hasTime
+      ? date.toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        })
+      : date.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+  };
+
+  const dueDate = formatTaskDueDate(task.suggestedDueDate || task.dueDate);
   
   return `| A${i + 1} | ${task.title || task.description} | ${task.assignedToName} | ${task.priority.charAt(0).toUpperCase() + task.priority.slice(1)} | ${task.status === 'pending' ? 'Open' : task.status} | ${dueDate} |`;
 }).join('\n')}
@@ -1486,11 +1510,8 @@ Return ONLY the corrected text, nothing else.`
       const meeting = meetings.find(m => m.id === meetingId);
       if (!meeting) return;
 
-      // Build participant list with IDs for better AI matching
-      const participantList = users
-        .filter(u => meeting.participants?.includes(u.id))
-        .map(u => u.name);
-      const participantNames = participantList.join(", ");
+      const participantUsers = users.filter(u => meeting.participants?.includes(u.id));
+      const participantNames = participantUsers.map(u => u.name).join(", ");
 
       console.log("Meeting participants:", participantNames);
 
@@ -1509,6 +1530,7 @@ Meeting Participants (use EXACTLY these names): ${participantNames}
 Rules:
 - Only extract tasks that are clearly stated as action items (e.g., "make a report", "organize the event", "prepare the list")
 - If a person's name or title is mentioned with a task (even partially, like "Pavan sir", "पवन", first name only), match them to the participants list and return their EXACT full name from the list above
+- If the spoken name is imperfect, choose the closest attendee name from the participant list and return the exact full name
 - Do NOT split one task into multiple tasks
 - Do NOT create tasks for things that are just mentioned in passing
 - If no clear tasks are mentioned, return an empty array []
@@ -1519,7 +1541,7 @@ Return ONLY a JSON array (no markdown, no explanation):
   "description": "brief description",
   "priority": "high/medium/low",
   "suggestedAssignee": "EXACT full name from participants list if mentioned, otherwise empty string",
-  "suggestedDeadline": "deadline if mentioned (e.g., 'tomorrow', 'next week'), otherwise empty string"
+  "suggestedDeadline": "deadline or time if mentioned (e.g., 'tomorrow 3 PM', 'next week'), otherwise empty string"
 }]
 
 Meeting Transcript:
@@ -1596,45 +1618,14 @@ ${transcript}`
           continue;
         }
 
-        // Try to match suggested assignee name to actual user ID
-        let suggestedUserId = "";
-        if (task.suggestedAssignee) {
-          const aiName = task.suggestedAssignee.toLowerCase().trim();
-          const matchedUser = users.find(u => {
-            const userName = u.name.toLowerCase().trim();
-            const userParts = userName.split(/\s+/);
-            return (
-              userName === aiName ||
-              userName.includes(aiName) ||
-              aiName.includes(userName) ||
-              userParts.some(part => part.length > 2 && aiName.includes(part)) ||
-              aiName.split(/\s+/).some(part => part.length > 2 && userName.includes(part))
-            );
-          });
-          if (matchedUser) {
-            suggestedUserId = matchedUser.id;
-            console.log(`Matched "${task.suggestedAssignee}" to user:`, matchedUser.name);
-          } else {
-            console.log(`No match found for "${task.suggestedAssignee}" in users:`, users.map(u => u.name));
-          }
-        }
-
-        // Calculate suggested due date
-        let suggestedDueDate = null;
-        if (task.suggestedDeadline) {
-          const deadline = task.suggestedDeadline.toLowerCase();
-          const now = new Date();
-          
-          if (deadline.includes('tomorrow')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 1));
-          } else if (deadline.includes('next week')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 7));
-          } else if (deadline.includes('3 days')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 3));
-          } else if (deadline.includes('week')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 7));
-          }
-        }
+        const matchedUser = task.suggestedAssignee
+          ? resolveSuggestedAssignee(task.suggestedAssignee, participantUsers)
+          : null;
+        const suggestedUserId = matchedUser?.id || "";
+        const suggestedAssigneeName = matchedUser?.name || task.suggestedAssignee || "";
+        const suggestedDueDate = task.suggestedDeadline
+          ? parseSuggestedDeadline(task.suggestedDeadline, meeting.scheduledAt?.toDate() || new Date())
+          : null;
         
         console.log("Saving task to Firestore:", task.title);
         
@@ -1646,7 +1637,7 @@ ${transcript}`
           status: "suggested",
           assignedBy: user?.id,
           suggestedAssignee: suggestedUserId,
-          suggestedAssigneeName: task.suggestedAssignee || "",
+          suggestedAssigneeName,
           suggestedDueDate: suggestedDueDate ? Timestamp.fromDate(suggestedDueDate) : null,
           createdAt: Timestamp.now(),
           updatedAt: Timestamp.now(),
@@ -1701,13 +1692,11 @@ ${transcript}`
           {meetings.map(meeting => (
             <div 
               key={meeting.id} 
-              className="bg-card rounded-xl shadow-card border border-border overflow-hidden"
+              className="bg-card rounded-xl shadow-card border border-border overflow-hidden cursor-pointer hover:shadow-lg transition-shadow"
+              onClick={() => setSelectedMeeting(meeting)}
             >
-              {/* Meeting Header - Always Visible */}
-              <div 
-                className="p-6 cursor-pointer hover:bg-accent/5 transition-colors"
-                onClick={() => toggleExpand(meeting.id)}
-              >
+              {/* Meeting Header - Card View */}
+              <div className="p-6">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
@@ -1743,927 +1732,42 @@ ${transcript}`
                       </div>
                     </div>
                   </div>
-                  <Button variant="ghost" size="sm">
-                    {expandedMeeting === meeting.id ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                  </Button>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
                 </div>
               </div>
-
-              {/* Expanded Details */}
-              {expandedMeeting === meeting.id && (
-                <div className="border-t border-border bg-accent/5">
-                  {/* Action Buttons */}
-                  <div className="p-4 border-b border-border bg-white flex items-center justify-between">
-                    <div className="flex gap-2">
-                      {/* Creator-only: status change controls */}
-                      {meeting.createdBy === user?.id && meeting.status === 'scheduled' && (
-                        <>
-                          <Button
-                            size="sm"
-                            onClick={() => handleStatusChange(meeting, 'in_progress')}
-                            className="bg-blue-600 hover:bg-blue-700"
-                          >
-                            Start Meeting
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleStatusChange(meeting, 'cancelled')}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            Cancel Meeting
-                          </Button>
-                        </>
-                      )}
-                      {meeting.createdBy === user?.id && meeting.status === 'in_progress' && (
-                        <>
-                          <Button
-                            size="sm"
-                            onClick={() => handleStatusChange(meeting, 'completed')}
-                            className="bg-green-600 hover:bg-green-700"
-                          >
-                            Mark as Completed
-                          </Button>
-                          <Button
-                            size="sm"
-                            onClick={() => recording === meeting.id ? stopRecording() : startRecording(meeting.id)}
-                            className={recording === meeting.id ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}
-                          >
-                            {recording === meeting.id ? (
-                              <>
-                                <MicOff className="w-4 h-4 mr-2" />
-                                Stop Recording
-                              </>
-                            ) : (
-                              <>
-                                <Mic className="w-4 h-4 mr-2" />
-                                Start Recording
-                              </>
-                            )}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => uploadAudio(meeting.id)}
-                            disabled={uploadingAudio === meeting.id}
-                          >
-                            {uploadingAudio === meeting.id ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Uploading...
-                              </>
-                            ) : (
-                              <>
-                                <Upload className="w-4 h-4 mr-2" />
-                                Upload Audio
-                              </>
-                            )}
-                          </Button>
-                        </>
-                      )}
-                      {meeting.status === 'processing' && (
-                        <div className="flex items-center gap-2 text-purple-600">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span className="text-sm font-medium">Processing meeting, please wait...</span>
-                        </div>
-                      )}
-                      {meeting.status === 'completed' && (
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-2 text-green-600">
-                            <CheckSquare className="w-5 h-5" />
-                            <span className="text-sm font-medium">Meeting completed successfully</span>
-                          </div>
-                          {/* Creator option to reprocess meeting */}
-                          {meeting.createdBy === user?.id && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={async () => {
-                                if (confirm('Reprocess this meeting? This will reassign tasks and regenerate the report.')) {
-                                  await updateDoc(doc(db, "meetings", meeting.id), {
-                                    status: 'in_progress',
-                                    updatedAt: Timestamp.now(),
-                                  });
-                                  toast({
-                                    title: "Meeting Reopened",
-                                    description: "You can now mark it as completed again to reprocess",
-                                  });
-                                  fetchMeetings();
-                                }
-                              }}
-                              className="text-blue-600 hover:text-blue-700"
-                            >
-                              <Pencil className="w-4 h-4 mr-1" />
-                              Reprocess
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                      {recording === meeting.id && liveTranscript[meeting.id] && (
-                        <div className="ml-4 px-3 py-1 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
-                          <span className="font-medium">Live: </span>
-                          {liveTranscript[meeting.id].substring(0, 50)}...
-                        </div>
-                      )}
-                      {/* PRC meeting — HOD participant can add agenda items before meeting starts */}
-                      {meeting.meetingType === 'prc' && meeting.status === 'scheduled' && meeting.createdBy !== user?.id && (
-                        <AddAgendaItemInline meeting={meeting} user={user} onSaved={fetchMeetings} />
-                      )}
-                    </div>
-                    {/* Creator-only: edit + delete buttons */}
-                    <div className="flex gap-2">
-                      {meeting.createdBy === user?.id && meeting.status !== 'completed' && meeting.status !== 'processing' && (
-                        <AddMeetingDialog
-                          onMeetingAdded={fetchMeetings}
-                          hodMode
-                          editMeeting={meeting}
-                          trigger={
-                            <Button variant="outline" size="sm">
-                              <Pencil className="w-4 h-4 mr-1" />
-                              Edit
-                            </Button>
-                          }
-                        />
-                      )}
-                      {meeting.createdBy === user?.id && meeting.status !== 'completed' && meeting.status !== 'processing' && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setDeletingMeeting(meeting)}
-                          className="text-red-600 hover:text-red-700"
-                        >
-                          <Trash2 className="w-4 h-4 mr-1" />
-                          Delete
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Tabs */}
-                  {(meeting.status === 'scheduled' || meeting.status === 'in_progress' || meeting.status === 'completed') && (
-                    <div className="flex gap-2 p-4 border-b bg-white">
-                      <button
-                        onClick={() => setActiveTab(prev => ({ ...prev, [meeting.id]: "details" }))}
-                        className={`px-4 py-2 font-medium rounded ${activeTab[meeting.id] === "details" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}
-                      >
-                        Details
-                      </button>
-                      <button
-                        onClick={() => setActiveTab(prev => ({ ...prev, [meeting.id]: "notes" }))}
-                        className={`px-4 py-2 font-medium rounded flex items-center gap-2 ${activeTab[meeting.id] === "notes" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}
-                      >
-                        <StickyNote className="w-4 h-4" />
-                        My Notes
-                      </button>
-                      <button
-                        onClick={() => setActiveTab(prev => ({ ...prev, [meeting.id]: "tasks" }))}
-                        className={`px-4 py-2 font-medium rounded flex items-center gap-2 ${activeTab[meeting.id] === "tasks" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}
-                      >
-                        <CheckSquare className="w-4 h-4" />
-                        Tasks ({suggestedTasks[meeting.id]?.length || 0})
-                      </button>
-                      {meeting.transcript && meeting.createdBy === user?.id && (
-                        <button
-                          onClick={() => setActiveTab(prev => ({ ...prev, [meeting.id]: "transcript" }))}
-                          className={`px-4 py-2 font-medium rounded flex items-center gap-2 ${activeTab[meeting.id] === "transcript" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}
-                        >
-                          <FileText className="w-4 h-4" />
-                          Transcript
-                        </button>
-                      )}
-                      {meeting.status === 'completed' && meeting.report && (
-                        <button
-                          onClick={() => setActiveTab(prev => ({ ...prev, [meeting.id]: "report" }))}
-                          className={`px-4 py-2 font-medium rounded flex items-center gap-2 ${activeTab[meeting.id] === "report" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600"}`}
-                        >
-                          <FileText className="w-4 h-4" />
-                          Report
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Tab Content */}
-                  <div className="p-6 space-y-6">
-                    {(!activeTab[meeting.id] || activeTab[meeting.id] === "details") && (
-                      <>
-                        {/* Meeting Info */}
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <Label className="text-sm font-medium text-muted-foreground">Date & Time</Label>
-                            <p className="text-sm mt-1">{formatDate(meeting.scheduledAt)}</p>
-                          </div>
-                          <div>
-                            <Label className="text-sm font-medium text-muted-foreground">Duration</Label>
-                            <p className="text-sm mt-1">{meeting.duration} minutes</p>
-                          </div>
-                          {meeting.venue && (
-                            <div>
-                              <Label className="text-sm font-medium text-muted-foreground">Venue</Label>
-                              <p className="text-sm mt-1">{meeting.venue}</p>
-                            </div>
-                          )}
-                          <div>
-                            <Label className="text-sm font-medium text-muted-foreground">Organizer</Label>
-                            <p className="text-sm mt-1">{meeting.createdByName || 'Unknown'}</p>
-                          </div>
-                        </div>
-
-                        {/* Participants */}
-                        <div>
-                          <Label className="text-sm font-medium text-muted-foreground mb-2 block">Participants ({meeting.participants?.length || 0})</Label>
-                          <div className="grid grid-cols-2 gap-2">
-                            {meeting.participants?.map((participantId: string) => {
-                              const participant = users.find(u => u.id === participantId);
-                              const displayRole = participant?.designation || participant?.role.replace(/_/g, ' ') || '';
-                              return (
-                                <div key={participantId} className="bg-white p-3 rounded border flex items-center gap-2">
-                                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium">
-                                    {participantNames[participantId]?.charAt(0) || '?'}
-                                  </div>
-                                  <div>
-                                    <p className="text-sm font-medium">{participantNames[participantId] || 'Unknown'}</p>
-                                    <p className="text-xs text-muted-foreground capitalize">{displayRole}</p>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        {/* Agenda */}
-                        {meeting.agendaItems && meeting.agendaItems.length > 0 && (
-                          <div>
-                            <Label className="text-sm font-medium text-muted-foreground mb-2 block">Agenda Items</Label>
-                            <div className="space-y-2">
-                              {meeting.agendaItems.map((item: any, index: number) => (
-                                <div key={index} className="bg-white p-4 rounded border">
-                                  <p className="font-medium text-sm">{item.title}</p>
-                                  {item.description && <p className="text-xs text-muted-foreground mt-1">{item.description}</p>}
-                                  <p className="text-xs text-muted-foreground mt-2">Added by: {item.addedByName}</p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Documents */}
-                        {meeting.documents && meeting.documents.length > 0 && (
-                          <div>
-                            <Label className="text-sm font-medium text-muted-foreground mb-2 block">Documents</Label>
-                            <div className="space-y-2">
-                              {meeting.documents.map((doc: any) => (
-                                <div key={doc.id} className="flex items-center justify-between bg-white p-3 rounded border">
-                                  <div className="flex items-center gap-2 flex-1">
-                                    <FileText className="w-4 h-4 text-muted-foreground" />
-                                    <div className="flex-1">
-                                      <p className="text-sm font-medium">{doc.name}</p>
-                                      <p className="text-xs text-muted-foreground">
-                                        Uploaded by {doc.uploadedByName} • {(doc.size / 1024).toFixed(1)} KB
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <div className="flex gap-2">
-                                    <Button 
-                                      variant="outline" 
-                                      size="sm" 
-                                      onClick={() => setPreviewDocument(doc)}
-                                    >
-                                      <Eye className="w-4 h-4 mr-1" />
-                                      Preview
-                                    </Button>
-                                    <Button 
-                                      variant="outline" 
-                                      size="sm" 
-                                      onClick={() => downloadDocument(doc)}
-                                    >
-                                      <Download className="w-4 h-4" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-
-                    {activeTab[meeting.id] === "notes" && (
-                      <div className="space-y-6">
-                        {/* Add New Note Section */}
-                        <div className="bg-white border rounded-lg p-4">
-                          <div className="flex justify-between items-center mb-3">
-                            <Label className="text-base font-semibold">Add New Note</Label>
-                            <div className="flex gap-2">
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={() => scanHandwrittenNote(meeting.id)}
-                                disabled={scanningNote === meeting.id}
-                              >
-                                {scanningNote === meeting.id ? (
-                                  <>
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                    Scanning...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Camera className="w-4 h-4 mr-2" />
-                                    Scan Handwritten
-                                  </>
-                                )}
-                              </Button>
-                            </div>
-                          </div>
-                          <Textarea
-                            value={newNoteText[meeting.id] || ""}
-                            onChange={(e) => setNewNoteText(prev => ({ ...prev, [meeting.id]: e.target.value }))}
-                            placeholder="Type your note here or scan handwritten notes..."
-                            rows={4}
-                            className="w-full mb-3"
-                          />
-                          <Button 
-                            size="sm"
-                            onClick={() => saveNewNote(meeting.id)}
-                            className="bg-blue-600 hover:bg-blue-700"
-                            disabled={!newNoteText[meeting.id]?.trim()}
-                          >
-                            <Plus className="w-4 h-4 mr-2" />
-                            Add Note
-                          </Button>
-                        </div>
-
-                        {/* Saved Notes List */}
-                        <div>
-                          <h3 className="text-base font-semibold mb-3">My Notes ({noteHistory[meeting.id]?.length || 0})</h3>
-                          {noteHistory[meeting.id] && noteHistory[meeting.id].length > 0 ? (
-                            <div className="space-y-3">
-                              {noteHistory[meeting.id].map((note: any) => (
-                                <div key={note.id} className="bg-white border rounded-lg p-4">
-                                  <div className="flex justify-between items-start mb-2">
-                                    <div className="flex items-center gap-2">
-                                      <span className={`text-xs px-2 py-1 rounded ${
-                                        note.type === 'scanned' 
-                                          ? 'bg-purple-100 text-purple-800' 
-                                          : 'bg-blue-100 text-blue-800'
-                                      }`}>
-                                        {note.type === 'scanned' ? '📷 Scanned' : '✍️ Manual'}
-                                      </span>
-                                      <span className="text-xs text-muted-foreground">
-                                        {note.createdAt?.toDate().toLocaleDateString('en-US', {
-                                          month: 'short',
-                                          day: 'numeric',
-                                          year: 'numeric',
-                                          hour: '2-digit',
-                                          minute: '2-digit'
-                                        })}
-                                      </span>
-                                    </div>
-                                    <div className="flex gap-2">
-                                      {note.imageData && (
-                                        <Dialog>
-                                          <DialogTrigger asChild>
-                                            <Button variant="ghost" size="sm">
-                                              <Eye className="w-4 h-4" />
-                                            </Button>
-                                          </DialogTrigger>
-                                          <DialogContent className="max-w-3xl">
-                                            <DialogHeader>
-                                              <DialogTitle>Scanned Image</DialogTitle>
-                                              <DialogDescription>
-                                                Original handwritten note
-                                              </DialogDescription>
-                                            </DialogHeader>
-                                            <div className="mt-4">
-                                              <img 
-                                                src={note.imageData} 
-                                                alt="Scanned note" 
-                                                className="w-full h-auto rounded border"
-                                              />
-                                            </div>
-                                          </DialogContent>
-                                        </Dialog>
-                                      )}
-                                      {editingNoteId !== note.id && (
-                                        <>
-                                          <Button 
-                                            variant="ghost" 
-                                            size="sm"
-                                            onClick={() => {
-                                              setEditingNoteId(note.id);
-                                              setEditNoteText(note.content);
-                                            }}
-                                          >
-                                            <Pencil className="w-4 h-4" />
-                                          </Button>
-                                          <Button 
-                                            variant="ghost" 
-                                            size="sm"
-                                            onClick={() => {
-                                              if (confirm('Delete this note?')) {
-                                                deleteNote(meeting.id, note.id);
-                                              }
-                                            }}
-                                            className="text-red-600 hover:text-red-700"
-                                          >
-                                            <Trash2 className="w-4 h-4" />
-                                          </Button>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                  
-                                  {editingNoteId === note.id ? (
-                                    <div className="space-y-2">
-                                      <Textarea
-                                        value={editNoteText}
-                                        onChange={(e) => setEditNoteText(e.target.value)}
-                                        rows={4}
-                                        className="w-full"
-                                      />
-                                      <div className="flex gap-2">
-                                        <Button 
-                                          size="sm"
-                                          onClick={() => updateNote(meeting.id, note.id)}
-                                          className="bg-green-600 hover:bg-green-700"
-                                        >
-                                          <Save className="w-4 h-4 mr-2" />
-                                          Save Changes
-                                        </Button>
-                                        <Button 
-                                          size="sm"
-                                          variant="outline"
-                                          onClick={() => {
-                                            setEditingNoteId(null);
-                                            setEditNoteText("");
-                                          }}
-                                        >
-                                          Cancel
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <p className="text-sm whitespace-pre-wrap">{note.content}</p>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="text-center py-8 bg-gray-50 rounded-lg border border-dashed">
-                              <StickyNote className="w-12 h-12 text-muted-foreground mx-auto mb-2" />
-                              <p className="text-sm text-muted-foreground">No notes yet</p>
-                              <p className="text-xs text-muted-foreground mt-1">Add your first note above</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {activeTab[meeting.id] === "tasks" && (
-                      <div className="space-y-3">
-                        {suggestedTasks[meeting.id]?.length > 0 ? (
-                          suggestedTasks[meeting.id].map((task: any) => (
-                            <div key={task.id} className="bg-white p-4 rounded border space-y-3">
-                              {editingTask === task.id ? (
-                                // Edit Mode
-                                <>
-                                  <div className="space-y-3">
-                                    <div>
-                                      <Label className="text-sm font-medium">Task Title</Label>
-                                      <Input
-                                        value={editTaskData.title || task.title}
-                                        onChange={(e) => setEditTaskData({ ...editTaskData, title: e.target.value })}
-                                        className="mt-1"
-                                      />
-                                    </div>
-                                    <div>
-                                      <Label className="text-sm font-medium">Description</Label>
-                                      <Textarea
-                                        value={editTaskData.description || task.description}
-                                        onChange={(e) => setEditTaskData({ ...editTaskData, description: e.target.value })}
-                                        rows={3}
-                                        className="mt-1"
-                                      />
-                                    </div>
-                                    <div>
-                                      <Label className="text-sm font-medium">Priority</Label>
-                                      <Select 
-                                        value={editTaskData.priority || task.priority}
-                                        onValueChange={(value) => setEditTaskData({ ...editTaskData, priority: value })}
-                                      >
-                                        <SelectTrigger className="w-full mt-1">
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="low">Low</SelectItem>
-                                          <SelectItem value="medium">Medium</SelectItem>
-                                          <SelectItem value="high">High</SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                    <div>
-                                      <Label className="text-sm font-medium">Due Date & Time</Label>
-                                      <div className="flex gap-2 mt-1">
-                                        <Popover>
-                                          <PopoverTrigger asChild>
-                                            <Button
-                                              variant="outline"
-                                              className="flex-1 justify-start text-left font-normal"
-                                            >
-                                              <CalendarIcon className="mr-2 h-4 w-4" />
-                                              {editTaskData.dueDate ? 
-                                                new Date(editTaskData.dueDate).toLocaleDateString('en-US', { 
-                                                  month: 'short', 
-                                                  day: 'numeric', 
-                                                  year: 'numeric' 
-                                                }) : 
-                                                (task.suggestedDueDate || task.dueDate) ?
-                                                  (task.suggestedDueDate || task.dueDate).toDate().toLocaleDateString('en-US', { 
-                                                    month: 'short', 
-                                                    day: 'numeric', 
-                                                    year: 'numeric' 
-                                                  }) :
-                                                  "Pick a date"
-                                              }
-                                            </Button>
-                                          </PopoverTrigger>
-                                          <PopoverContent className="w-auto p-0" align="start">
-                                            <CalendarComponent
-                                              mode="single"
-                                              selected={editTaskData.dueDate ? new Date(editTaskData.dueDate) : (task.suggestedDueDate || task.dueDate)?.toDate()}
-                                              onSelect={(date) => {
-                                                if (date) {
-                                                  // Preserve existing time if set
-                                                  const existingTime = selectedTime[task.id] || "09:00";
-                                                  const [hours, minutes] = existingTime.split(':');
-                                                  date.setHours(parseInt(hours), parseInt(minutes));
-                                                  setEditTaskData({ ...editTaskData, dueDate: date.getTime() });
-                                                }
-                                              }}
-                                              initialFocus
-                                            />
-                                          </PopoverContent>
-                                        </Popover>
-                                        <div className="flex items-center gap-1">
-                                          <Clock className="w-4 h-4 text-muted-foreground" />
-                                          <Input
-                                            type="time"
-                                            value={selectedTime[task.id] || (editTaskData.dueDate ? new Date(editTaskData.dueDate).toTimeString().slice(0, 5) : "09:00")}
-                                            onChange={(e) => {
-                                              setSelectedTime(prev => ({ ...prev, [task.id]: e.target.value }));
-                                              if (editTaskData.dueDate) {
-                                                const date = new Date(editTaskData.dueDate);
-                                                const [hours, minutes] = e.target.value.split(':');
-                                                date.setHours(parseInt(hours), parseInt(minutes));
-                                                setEditTaskData({ ...editTaskData, dueDate: date.getTime() });
-                                              }
-                                            }}
-                                            className="w-28"
-                                          />
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <div className="flex gap-2 pt-2 border-t">
-                                    <Button 
-                                      size="sm"
-                                      onClick={() => {
-                                        const updates = { ...editTaskData };
-                                        // Convert dueDate timestamp to Firestore Timestamp if it exists
-                                        if (updates.dueDate) {
-                                          updates.dueDate = Timestamp.fromMillis(updates.dueDate);
-                                        }
-                                        updateTask(meeting.id, task.id, updates);
-                                        setEditingTask(null);
-                                        setEditTaskData({});
-                                      }}
-                                      className="bg-green-600 hover:bg-green-700"
-                                    >
-                                      Save Changes
-                                    </Button>
-                                    <Button 
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => {
-                                        setEditingTask(null);
-                                        setEditTaskData({});
-                                      }}
-                                    >
-                                      Cancel
-                                    </Button>
-                                  </div>
-                                </>
-                              ) : (
-                                // View Mode
-                                <>
-                                  <div className="flex justify-between items-start">
-                                    <div className="flex-1">
-                                      <p className="font-semibold text-base">{task.title}</p>
-                                      <p className="text-sm text-muted-foreground mt-1">{task.description}</p>
-                                      
-                                      <div className="flex flex-wrap gap-2 mt-2">
-                                        <span className={`text-xs px-2 py-1 rounded inline-block ${
-                                          task.priority === 'high' ? 'bg-red-100 text-red-800' :
-                                          task.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                                          'bg-green-100 text-green-800'
-                                        }`}>
-                                          {task.priority} priority
-                                        </span>
-                                        
-                                        <span className={`text-xs px-2 py-1 rounded inline-block ${
-                                          task.status === 'pending' ? 'bg-blue-100 text-blue-800' :
-                                          task.status === 'suggested' ? 'bg-yellow-100 text-yellow-800' :
-                                          'bg-gray-100 text-gray-800'
-                                        }`}>
-                                          {task.status}
-                                        </span>
-                                        
-                                        {task.assignedTo && participantNames[task.assignedTo] && (
-                                          <span className="text-xs px-2 py-1 rounded inline-block bg-green-100 text-green-800">
-                                            {task.status === 'pending' ? '✓ Assigned to:' : '👤 Selected:'} {participantNames[task.assignedTo]}
-                                          </span>
-                                        )}
-                                        
-                                        {!task.assignedTo && task.suggestedAssigneeName && (
-                                          <span className="text-xs px-2 py-1 rounded inline-block bg-purple-100 text-purple-800">
-                                            💡 Suggested: {task.suggestedAssigneeName}
-                                          </span>
-                                        )}
-                                        
-                                        {(task.suggestedDueDate || task.dueDate) && (
-                                          <span className="text-xs px-2 py-1 rounded inline-block bg-orange-100 text-orange-800">
-                                            📅 Due: {(task.suggestedDueDate || task.dueDate)?.toDate().toLocaleDateString('en-US', { 
-                                              month: 'short', 
-                                              day: 'numeric', 
-                                              year: 'numeric' 
-                                            })} at {(task.suggestedDueDate || task.dueDate)?.toDate().toLocaleTimeString('en-US', { 
-                                              hour: '2-digit', 
-                                              minute: '2-digit',
-                                              hour12: true 
-                                            })}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <div className="flex gap-2">
-                                      {meeting.createdBy === user?.id && (
-                                        <>
-                                          <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => {
-                                              setEditingTask(task.id);
-                                              setEditTaskData({
-                                                title: task.title,
-                                                description: task.description,
-                                                priority: task.priority
-                                              });
-                                            }}
-                                          >
-                                            <Pencil className="w-4 h-4 mr-1" />
-                                            Edit
-                                          </Button>
-                                          <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => {
-                                              if (confirm('Are you sure you want to delete this task?')) {
-                                                deleteTask(meeting.id, task.id);
-                                              }
-                                            }}
-                                            className="text-red-600 hover:text-red-700"
-                                          >
-                                            <Trash2 className="w-4 h-4 mr-1" />
-                                            Delete
-                                          </Button>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="space-y-2 pt-2 border-t">
-                                    {meeting.createdBy === user?.id ? (
-                                      !task.assignedTo ? (
-                                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-3">
-                                        <Label className="text-sm font-semibold">Assign Task</Label>
-                                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                          <div className="space-y-1">
-                                            <Label className="text-xs text-muted-foreground">Assign to</Label>
-                                            <Select
-                                              value={pendingAssignments[task.id]?.assigneeId || task.suggestedAssignee || ""}
-                                              onValueChange={(value) =>
-                                                setPendingAssignments(prev => ({
-                                                  ...prev,
-                                                  [task.id]: { assigneeId: value, dueDate: prev[task.id]?.dueDate || "", dueTime: prev[task.id]?.dueTime || "09:00" }
-                                                }))
-                                              }
-                                            >
-                                              <SelectTrigger>
-                                                <SelectValue placeholder="Select person..." />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                {users.filter(u => meeting.participants?.includes(u.id)).map(u => (
-                                                  <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-                                                ))}
-                                              </SelectContent>
-                                            </Select>
-                                          </div>
-                                          <div className="space-y-1">
-                                            <Label className="text-xs text-muted-foreground">Priority</Label>
-                                            <Select
-                                              value={pendingAssignments[task.id]?.priority || task.priority || "medium"}
-                                              onValueChange={(value) =>
-                                                setPendingAssignments(prev => ({
-                                                  ...prev,
-                                                  [task.id]: { ...prev[task.id] || { assigneeId: "", dueDate: "", dueTime: "09:00" }, priority: value }
-                                                }))
-                                              }
-                                            >
-                                              <SelectTrigger>
-                                                <SelectValue />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                <SelectItem value="low">Low</SelectItem>
-                                                <SelectItem value="medium">Medium</SelectItem>
-                                                <SelectItem value="high">High</SelectItem>
-                                              </SelectContent>
-                                            </Select>
-                                          </div>
-                                          <div className="space-y-1">
-                                            <Label className="text-xs text-muted-foreground">Due Date</Label>
-                                            <Input
-                                              type="date"
-                                              value={pendingAssignments[task.id]?.dueDate || (task.suggestedDueDate ? task.suggestedDueDate.toDate().toISOString().split('T')[0] : "")}
-                                              onChange={(e) =>
-                                                setPendingAssignments(prev => ({
-                                                  ...prev,
-                                                  [task.id]: { ...prev[task.id] || { assigneeId: "", dueDate: "", dueTime: "09:00" }, dueDate: e.target.value }
-                                                }))
-                                              }
-                                            />
-                                          </div>
-                                          <div className="space-y-1">
-                                            <Label className="text-xs text-muted-foreground">Due Time</Label>
-                                            <Input
-                                              type="time"
-                                              value={pendingAssignments[task.id]?.dueTime || "09:00"}
-                                              onChange={(e) =>
-                                                setPendingAssignments(prev => ({
-                                                  ...prev,
-                                                  [task.id]: { ...prev[task.id] || { assigneeId: "", dueDate: "", dueTime: "09:00" }, dueTime: e.target.value }
-                                                }))
-                                              }
-                                            />
-                                          </div>
-                                        </div>
-                                        <Button
-                                          size="sm"
-                                          className="bg-teal-600 hover:bg-teal-700 w-full"
-                                          disabled={!(pendingAssignments[task.id]?.assigneeId || task.suggestedAssignee) || !(pendingAssignments[task.id]?.dueDate || task.suggestedDueDate)}
-                                          onClick={() => {
-                                            const p = pendingAssignments[task.id];
-                                            const assigneeId = p?.assigneeId || task.suggestedAssignee || "";
-                                            const dueDate = p?.dueDate || (task.suggestedDueDate ? task.suggestedDueDate.toDate().toISOString().split('T')[0] : "");
-                                            const dueTime = p?.dueTime || "09:00";
-                                            const priority = p?.priority;
-                                            assignTask(meeting.id, task, assigneeId, dueDate, dueTime, priority);
-                                          }}
-                                        >
-                                          Assign & Send Notification
-                                        </Button>
-                                      </div>
-                                    ) : (
-                                      <div className="text-sm text-green-600 font-medium">
-                                        ✓ Assigned to {task.assignedToName || participantNames[task.assignedTo]} — notification sent
-                                      </div>
-                                    )
-                                    ) : (
-                                      /* Participant view — read-only */
-                                      task.assignedTo ? (
-                                        <div className="text-sm text-green-600 font-medium">
-                                          ✓ Assigned to {task.assignedToName || participantNames[task.assignedTo]}
-                                        </div>
-                                      ) : task.suggestedAssigneeName ? (
-                                        <div className="text-sm text-purple-600">
-                                          💡 Suggested: {task.suggestedAssigneeName}
-                                        </div>
-                                      ) : null
-                                    )}
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                          ))
-                        ) : (
-                          <p className="text-sm text-muted-foreground text-center py-8">
-                            No tasks generated yet. Start recording to generate tasks automatically.
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    {activeTab[meeting.id] === "transcript" && (
-                      <div className="space-y-3">
-                        <div className="bg-white p-4 rounded border max-h-96 overflow-y-auto">
-                          <p className="text-sm whitespace-pre-wrap">{meeting.transcript || "No transcript available"}</p>
-                        </div>
-                      </div>
-                    )}
-
-                    {activeTab[meeting.id] === "report" && (
-                      <div className="space-y-3">
-                        <div className="bg-white p-6 rounded border">
-                          <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-lg font-semibold">Minutes of Meeting (MoM)</h3>
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(meeting.report || '');
-                                  toast({ title: "Copied", description: "Report copied to clipboard" });
-                                }}
-                              >
-                                <Download className="w-4 h-4 mr-1" />
-                                Copy
-                              </Button>
-                              <Button size="sm" variant="outline" onClick={() => downloadAsPDF(meeting.report, meeting.title)}>
-                                <FileText className="w-4 h-4 mr-1" />
-                                PDF
-                              </Button>
-                              <Button size="sm" variant="outline" onClick={() => downloadAsWord(meeting.report, meeting.title)}>
-                                <Download className="w-4 h-4 mr-1" />
-                                Word
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="prose prose-sm max-w-none report-content">
-                            <style>{`
-                              .report-content h1 { font-size: 1.5rem; font-weight: bold; margin-top: 1.5rem; margin-bottom: 1rem; }
-                              .report-content h2 { font-size: 1.25rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.75rem; color: #1e40af; }
-                              .report-content hr { margin: 1.5rem 0; border-color: #e5e7eb; }
-                              .report-content table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
-                              .report-content table th { background: #f3f4f6; padding: 0.75rem; text-align: left; font-weight: 600; border: 1px solid #d1d5db; }
-                              .report-content table td { padding: 0.75rem; border: 1px solid #d1d5db; }
-                              .report-content table tr:nth-child(even) { background: #f9fafb; }
-                              .report-content ul { margin-left: 1.5rem; }
-                              .report-content li { margin: 0.25rem 0; }
-                            `}</style>
-                            <div 
-                              dangerouslySetInnerHTML={{
-                                __html: (meeting.report || "Report not generated yet")
-                                  // Convert markdown to HTML
-                                  .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-                                  .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-                                  .replace(/^---$/gm, '<hr />')
-                                  // Convert markdown table to HTML table
-                                  .replace(/\| ID \| Action Item.*\n\| :--.*\n((?:\|.*\n?)+)/g, (match, rows) => {
-                                    const tableRows = rows.trim().split('\n').map(row => {
-                                      const cells = row.split('|').filter(c => c.trim()).map(c => c.trim());
-                                      return `<tr>${cells.map(cell => `<td>${cell}</td>`).join('')}</tr>`;
-                                    }).join('');
-                                    return `<table>
-                                      <thead>
-                                        <tr>
-                                          <th>ID</th>
-                                          <th>Action Item</th>
-                                          <th>Assigned To</th>
-                                          <th>Priority</th>
-                                          <th>Status</th>
-                                          <th>Due Date</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>${tableRows}</tbody>
-                                    </table>`;
-                                  })
-                                  // Convert bullet points
-                                  .replace(/^\*   \*\*(.+?):\*\* (.+)$/gm, '<div style="margin-left: 1.5rem;"><strong>$1:</strong> $2</div>')
-                                  .replace(/^\*   (.+)$/gm, '<div style="margin-left: 2rem;">• $1</div>')
-                                  // Convert bold and italic
-                                  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                                  .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                                  // Convert line breaks
-                                  .replace(/\n\n/g, '<br/><br/>')
-                                  .replace(/\n/g, '<br/>')
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
           ))}
         </div>
-      ) : (
+      ) : meetings.length > 0 ? null : (
         <div className="bg-card rounded-xl p-12 text-center border border-border">
           <Calendar className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-foreground mb-2">No meetings yet</h3>
           <p className="text-muted-foreground mb-4">Schedule your first meeting to get started</p>
           <AddMeetingDialog onMeetingAdded={fetchMeetings} hodMode />
         </div>
+      )}
+
+      {/* Meeting Details Dialog */}
+      {selectedMeeting && (
+        <MeetingDetailsDialog
+          meeting={selectedMeeting}
+          open={!!selectedMeeting}
+          onOpenChange={(open) => {
+            if (!open) setSelectedMeeting(null);
+          }}
+          onMeetingUpdated={fetchMeetings}
+        />
+      )}
+
+      {selectedMeeting && (
+        <MeetingDetailsDialog
+          meeting={selectedMeeting}
+          open={!!selectedMeeting}
+          onOpenChange={(open) => {
+            if (!open) setSelectedMeeting(null);
+          }}
+          onMeetingUpdated={fetchMeetings}
+        />
       )}
 
       {/* Scanned Text Preview Dialog */}

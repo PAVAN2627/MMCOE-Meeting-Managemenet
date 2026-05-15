@@ -10,6 +10,7 @@ import { doc, updateDoc, deleteDoc, getDocs, collection, Timestamp, addDoc, quer
 import { db } from "@/integrations/firebase/config";
 import { useAuth } from "@/contexts/AuthContext";
 import { User } from "@/types/user.types";
+import { parseSuggestedDeadline, resolveSuggestedAssignee, toDateTimeLocalInputValue } from "@/lib/taskExtraction";
 import { Loader2, Pencil, Trash2, X, Plus, Download, FileText, Calendar, Clock, MapPin, Users as UsersIcon, Eye, Upload, Mic, MicOff, StickyNote, CheckSquare } from "lucide-react";
 import {
   AlertDialog,
@@ -329,11 +330,8 @@ export const MeetingDetailsDialog = ({ meeting, open, onOpenChange, onMeetingUpd
     try {
       console.log("Generating tasks from transcript:", transcript.substring(0, 100));
       
-      // Get list of participant names for AI to match
-      const participantNames = users
-        .filter(u => meeting.participants?.includes(u.id))
-        .map(u => u.name)
-        .join(", ");
+      const participantUsers = users.filter(u => meeting.participants?.includes(u.id));
+      const participantNames = participantUsers.map(u => u.name).join(", ");
 
       console.log("Meeting participants:", participantNames);
 
@@ -351,7 +349,9 @@ Meeting Participants: ${participantNames}
 
 IMPORTANT: If a person's name is mentioned with a task (e.g., "Anubhav will make the report", "assign this to Rajesh", "John should handle this"), include that person's name in the suggestedAssignee field. Match names from the participant list above.
 
-Also try to detect deadlines or timeframes mentioned (e.g., "by tomorrow", "next week", "in 3 days").
+If the spoken name is imperfect, use the closest attendee name from the participant list and return the exact full name.
+
+Also try to detect deadlines or timeframes mentioned, including time if it is spoken (e.g., "tomorrow 3 PM", "next week", "in 3 days").
 
 Return ONLY a JSON array with this exact format (no markdown, no explanation):
 [{
@@ -359,7 +359,7 @@ Return ONLY a JSON array with this exact format (no markdown, no explanation):
   "description": "detailed task description",
   "priority": "high/medium/low",
   "suggestedAssignee": "person name if mentioned, otherwise empty string",
-  "suggestedDeadline": "deadline if mentioned (e.g., 'tomorrow', 'next week', '3 days'), otherwise empty string"
+  "suggestedDeadline": "deadline or due time if mentioned (e.g., 'tomorrow 3 PM', 'next week'), otherwise empty string"
 }]
 
 Meeting Transcript:
@@ -415,35 +415,14 @@ ${transcript}`
           continue;
         }
 
-        // Try to match suggested assignee name to actual user ID
-        let suggestedUserId = "";
-        if (task.suggestedAssignee) {
-          const matchedUser = users.find(u => 
-            u.name.toLowerCase().includes(task.suggestedAssignee.toLowerCase()) ||
-            task.suggestedAssignee.toLowerCase().includes(u.name.toLowerCase())
-          );
-          if (matchedUser) {
-            suggestedUserId = matchedUser.id;
-            console.log(`Matched "${task.suggestedAssignee}" to user:`, matchedUser.name);
-          }
-        }
-
-        // Calculate suggested due date
-        let suggestedDueDate = null;
-        if (task.suggestedDeadline) {
-          const deadline = task.suggestedDeadline.toLowerCase();
-          const now = new Date();
-          
-          if (deadline.includes('tomorrow')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 1));
-          } else if (deadline.includes('next week')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 7));
-          } else if (deadline.includes('3 days')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 3));
-          } else if (deadline.includes('week')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 7));
-          }
-        }
+        const matchedUser = task.suggestedAssignee
+          ? resolveSuggestedAssignee(task.suggestedAssignee, participantUsers)
+          : null;
+        const suggestedUserId = matchedUser?.id || "";
+        const suggestedAssigneeName = matchedUser?.name || task.suggestedAssignee || "";
+        const suggestedDueDate = task.suggestedDeadline
+          ? parseSuggestedDeadline(task.suggestedDeadline, meeting.scheduledAt?.toDate() || new Date())
+          : null;
         
         console.log("Saving task to Firestore:", task.title);
         
@@ -455,7 +434,7 @@ ${transcript}`
           status: "suggested",
           assignedBy: user?.id,
           suggestedAssignee: suggestedUserId,
-          suggestedAssigneeName: task.suggestedAssignee || "",
+          suggestedAssigneeName,
           suggestedDueDate: suggestedDueDate ? Timestamp.fromDate(suggestedDueDate) : null,
           createdAt: Timestamp.now(),
           updatedAt: Timestamp.now(),
@@ -467,7 +446,7 @@ ${transcript}`
           id: taskDoc.id, 
           ...task,
           suggestedAssignee: suggestedUserId,
-          suggestedAssigneeName: task.suggestedAssignee || "",
+          suggestedAssigneeName,
           suggestedDueDate: suggestedDueDate ? Timestamp.fromDate(suggestedDueDate) : null,
         });
       }
@@ -1091,7 +1070,13 @@ ${transcript}`
                                     
                                     {task.suggestedDueDate && (
                                       <span className="text-xs px-2 py-1 rounded inline-block bg-purple-100 text-purple-800">
-                                        Due: {task.suggestedDueDate.toDate().toLocaleDateString()}
+                                          Due: {task.suggestedDueDate.toDate().toLocaleString("en-US", {
+                                            month: "short",
+                                            day: "numeric",
+                                            year: "numeric",
+                                            hour: "numeric",
+                                            minute: "2-digit",
+                                          })}
                                       </span>
                                     )}
                                   </div>
@@ -1121,9 +1106,9 @@ ${transcript}`
 
                                 <Label className="text-sm font-medium ml-2">Due Date:</Label>
                                 <Input
-                                  type="date"
+                                  type="datetime-local"
                                   className="w-[160px]"
-                                  defaultValue={task.suggestedDueDate ? task.suggestedDueDate.toDate().toISOString().split('T')[0] : ""}
+                                  defaultValue={toDateTimeLocalInputValue(task.suggestedDueDate?.toDate())}
                                   onChange={(e) => {
                                     task.selectedDueDate = e.target.value ? new Date(e.target.value) : null;
                                   }}

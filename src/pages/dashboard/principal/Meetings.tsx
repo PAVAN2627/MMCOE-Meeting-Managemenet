@@ -17,6 +17,7 @@ import { User } from "@/types/user.types";
 import { AddMeetingDialog } from "@/components/forms/AddMeetingDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { parseSuggestedDeadline, resolveSuggestedAssignee } from "@/lib/taskExtraction";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -284,9 +285,26 @@ const PrincipalMeetings = () => {
             
             if (assignedUser && assignedUser.email) {
               try {
-                const dueDate = task.suggestedDueDate?.toDate().toLocaleDateString() || 
-                               task.dueDate?.toDate().toLocaleDateString() || 
-                               'Not specified';
+                const formatDueDate = (timestamp: any) => {
+                  const date = timestamp?.toDate?.();
+                  if (!date) return 'Not specified';
+                  const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0;
+                  return hasTime
+                    ? date.toLocaleString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })
+                    : date.toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      });
+                };
+
+                const dueDate = formatDueDate(task.suggestedDueDate || task.dueDate);
                 
                 // Build HTML email (like welcome email)
                 const priorityColor = task.priority === 'high' ? '#ef4444' : 
@@ -522,15 +540,26 @@ ${aiSummary}
 | ID | Action Item | Assigned To | Priority | Status | Due Date |
 | :-- | :------------------------------------------- | :---------- | :--------- | :----- | :------- |
 ${tasks.map((task: any, i: number) => {
-  const dueDate = task.suggestedDueDate?.toDate().toLocaleDateString('en-US', { 
-    month: 'short', 
-    day: 'numeric', 
-    year: 'numeric' 
-  }) || task.dueDate?.toDate().toLocaleDateString('en-US', { 
-    month: 'short', 
-    day: 'numeric', 
-    year: 'numeric' 
-  }) || 'TBD';
+  const formatTaskDueDate = (timestamp: any) => {
+    const date = timestamp?.toDate?.();
+    if (!date) return 'TBD';
+    const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0;
+    return hasTime
+      ? date.toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        })
+      : date.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+  };
+
+  const dueDate = formatTaskDueDate(task.suggestedDueDate || task.dueDate);
   
   return `| A${i + 1} | ${task.title || task.description} | ${task.assignedToName} | ${task.priority.charAt(0).toUpperCase() + task.priority.slice(1)} | ${task.status === 'pending' ? 'Open' : task.status} | ${dueDate} |`;
 }).join('\n')}
@@ -1421,11 +1450,8 @@ Return ONLY the corrected text, nothing else.`
       const meeting = meetings.find(m => m.id === meetingId);
       if (!meeting) return;
 
-      // Build participant list with IDs for better AI matching
-      const participantList = users
-        .filter(u => meeting.participants?.includes(u.id))
-        .map(u => u.name);
-      const participantNames = participantList.join(", ");
+      const participantUsers = users.filter(u => meeting.participants?.includes(u.id));
+      const participantNames = participantUsers.map(u => u.name).join(", ");
 
       console.log("Meeting participants:", participantNames);
 
@@ -1444,6 +1470,7 @@ Meeting Participants (use EXACTLY these names): ${participantNames}
 Rules:
 - Only extract tasks that are clearly stated as action items (e.g., "make a report", "organize the event", "prepare the list")
 - If a person's name or title is mentioned with a task (even partially, like "Pavan sir", "पवन", first name only), match them to the participants list and return their EXACT full name from the list above
+- If the spoken name is imperfect, choose the closest attendee name from the participant list and return the exact full name
 - Do NOT split one task into multiple tasks
 - Do NOT create tasks for things that are just mentioned in passing
 - If no clear tasks are mentioned, return an empty array []
@@ -1454,7 +1481,7 @@ Return ONLY a JSON array (no markdown, no explanation):
   "description": "brief description",
   "priority": "high/medium/low",
   "suggestedAssignee": "EXACT full name from participants list if mentioned, otherwise empty string",
-  "suggestedDeadline": "deadline if mentioned (e.g., 'tomorrow', 'next week'), otherwise empty string"
+  "suggestedDeadline": "deadline or time if mentioned (e.g., 'tomorrow 3 PM', 'next week'), otherwise empty string"
 }]
 
 Meeting Transcript:
@@ -1534,45 +1561,14 @@ ${transcript}`
           continue;
         }
 
-        // Try to match suggested assignee name to actual user ID
-        let suggestedUserId = "";
-        if (task.suggestedAssignee) {
-          const aiName = task.suggestedAssignee.toLowerCase().trim();
-          const matchedUser = users.find(u => {
-            const userName = u.name.toLowerCase().trim();
-            const userParts = userName.split(/\s+/); // first name, last name parts
-            return (
-              userName === aiName ||                                      // exact match
-              userName.includes(aiName) ||                               // user name contains AI name
-              aiName.includes(userName) ||                               // AI name contains user name
-              userParts.some(part => part.length > 2 && aiName.includes(part)) || // any name part matches
-              aiName.split(/\s+/).some(part => part.length > 2 && userName.includes(part)) // AI name part in user name
-            );
-          });
-          if (matchedUser) {
-            suggestedUserId = matchedUser.id;
-            console.log(`Matched "${task.suggestedAssignee}" to user:`, matchedUser.name);
-          } else {
-            console.log(`No match found for "${task.suggestedAssignee}" in users:`, users.map(u => u.name));
-          }
-        }
-
-        // Calculate suggested due date
-        let suggestedDueDate = null;
-        if (task.suggestedDeadline) {
-          const deadline = task.suggestedDeadline.toLowerCase();
-          const now = new Date();
-          
-          if (deadline.includes('tomorrow')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 1));
-          } else if (deadline.includes('next week')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 7));
-          } else if (deadline.includes('3 days')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 3));
-          } else if (deadline.includes('week')) {
-            suggestedDueDate = new Date(now.setDate(now.getDate() + 7));
-          }
-        }
+        const matchedUser = task.suggestedAssignee
+          ? resolveSuggestedAssignee(task.suggestedAssignee, participantUsers)
+          : null;
+        const suggestedUserId = matchedUser?.id || "";
+        const suggestedAssigneeName = matchedUser?.name || task.suggestedAssignee || "";
+        const suggestedDueDate = task.suggestedDeadline
+          ? parseSuggestedDeadline(task.suggestedDeadline, meeting.scheduledAt?.toDate() || new Date())
+          : null;
         
         console.log("Saving task to Firestore:", task.title);
         
@@ -1584,7 +1580,7 @@ ${transcript}`
           status: "suggested",
           assignedBy: user?.id,
           suggestedAssignee: suggestedUserId,
-          suggestedAssigneeName: task.suggestedAssignee || "",
+          suggestedAssigneeName,
           suggestedDueDate: suggestedDueDate ? Timestamp.fromDate(suggestedDueDate) : null,
           createdAt: Timestamp.now(),
           updatedAt: Timestamp.now(),
@@ -2572,11 +2568,17 @@ ${transcript}`
                                   .replace(/^## (.+)$/gm, '<h2>$1</h2>')
                                   .replace(/^---$/gm, '<hr />')
                                   // Convert markdown table to HTML table
-                                  .replace(/\| ID \| Action Item.*\n\| :--.*\n((?:\|.*\n?)+)/g, (match, rows) => {
-                                    const tableRows = rows.trim().split('\n').map(row => {
-                                      const cells = row.split('|').filter(c => c.trim()).map(c => c.trim());
-                                      return `<tr>${cells.map(cell => `<td>${cell}</td>`).join('')}</tr>`;
-                                    }).join('');
+                                  .replace(/\| ID \| Action Item.*\n\| :--.*\n((?:\|.*\n?)*)/g, (match, rows) => {
+                                    const tableRows = rows
+                                      .trim()
+                                      .split('\n')
+                                      .map(row => row.trim())
+                                      .filter(row => row.startsWith('|') && !/^\|[\s:\-.|]+\|$/.test(row))
+                                      .map(row => {
+                                        const cells = row.split('|').filter(c => c.trim()).map(c => c.trim());
+                                        return `<tr>${cells.map(cell => `<td>${cell}</td>`).join('')}</tr>`;
+                                      })
+                                      .join('');
                                     return `<table>
                                       <thead>
                                         <tr>

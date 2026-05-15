@@ -10,6 +10,8 @@ interface ReportSection {
   bold?: boolean;
 }
 
+const isMarkdownTableDivider = (line: string) => /^\|[\s:\-|]+\|$/.test(line.trim());
+
 export function parseReport(report: string): ReportSection[] {
   const lines = report.split("\n");
   const sections: ReportSection[] = [];
@@ -20,7 +22,7 @@ export function parseReport(report: string): ReportSection[] {
       sections.push({ type: "heading2", content: line.slice(3).trim() });
     } else if (line.startsWith("*   ")) {
       sections.push({ type: "bullet", content: line.replace(/^\*\s+/, "").replace(/\*\*/g, "").trim() });
-    } else if (line.startsWith("| ") && line.includes("|") && !/^\|[\s|:\-]+\|$/.test(line.trim())) {
+    } else if (line.startsWith("| ") && line.includes("|") && !isMarkdownTableDivider(line)) {
       const cells = line.split("|").map(c => c.trim()).filter(Boolean);
       if (cells.length > 0) sections.push({ type: "tableRow", content: line, cells });
     } else if (line.startsWith("---")) {
